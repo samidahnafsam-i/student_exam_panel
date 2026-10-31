@@ -53,7 +53,24 @@
       <div><label>Duration (minutes)</label><input type="number" id="minutes" value="30" min="1"></div>
     </div>
 
-    <label>Question photos (select many; order = question number)</label>
+    <div style="border:1px dashed var(--line);border-radius:10px;padding:12px;margin-top:12px">
+      <label style="margin-top:0">Photo with MANY questions — auto-detect and cut into separate questions</label>
+      <input type="file" id="multiFile" accept="image/*">
+      <button type="button" id="detectBtn" style="margin-top:8px">Detect questions</button>
+      <span id="detStatus" class="muted"></span>
+      <p class="muted" style="margin:8px 0 0">The AI finds each question and its serial number. Always check the cut-outs below and fix the numbers or delete wrong ones.</p>
+    </div>
+
+    <div style="border:1px dashed var(--line);border-radius:10px;padding:12px;margin-top:12px">
+      <label style="margin-top:0">PDF — every page becomes one question</label>
+      <input type="file" id="pdfFile" accept="application/pdf">
+      <div class="row" style="margin-top:8px;align-items:end">
+        <div><label style="margin-top:0">Pages to use (optional, e.g. 2-30 or 1,3,5-8)</label><input type="text" id="pdfPages" placeholder="all pages"></div>
+        <div><button type="button" id="pdfBtn">Add PDF pages</button> <span id="pdfStatus" class="muted"></span></div>
+      </div>
+    </div>
+
+    <label>Question photos (select many; one question per photo)</label>
     <input type="file" id="qFiles" accept="image/*" multiple>
     <div id="qList"></div>
 
@@ -131,10 +148,11 @@ function renderItems() {
     const d = document.createElement("div"); d.className = "q";
     const letters = "ABCDEF".slice(0, it.options).split("");
     d.innerHTML =
-      '<img src="' + it.url + '"><div class="f"><strong>Q' + (i + 1) + '</strong>' +
+      '<img src="' + it.url + '"><div class="f"><strong>Q</strong><input type="text" data-k="label" value="' + String(it.label || "").replace(/"/g, "") + '" placeholder="' + (i + 1) + '" style="width:64px" maxlength="10">' +
       '<span>Options <select data-k="options">' + [2,3,4,5,6].map(n => '<option ' + (n === it.options ? "selected" : "") + '>' + n + '</option>').join("") + '</select></span>' +
       '<span>Correct <select data-k="correct"><option value="">—</option>' + letters.map(l => '<option ' + (l === it.correct ? "selected" : "") + '>' + l + '</option>').join("") + '</select></span>' +
       '</div><button class="ghost" data-up>↑</button><button class="danger" data-del>✕</button>';
+    d.querySelector('[data-k="label"]').oninput = (e) => { it.label = e.target.value; };
     d.querySelector('[data-k="options"]').onchange = (e) => { it.options = +e.target.value; if (it.correct && "ABCDEF".indexOf(it.correct) >= it.options) it.correct = ""; renderItems(); };
     d.querySelector('[data-k="correct"]').onchange = (e) => { it.correct = e.target.value; };
     d.querySelector("[data-del]").onclick = () => { items.splice(i, 1); renderItems(); };
@@ -148,6 +166,96 @@ async function uploadBlob(blob) {
   return r.key;
 }
 
+function parseRange(txt, max) {
+  txt = (txt || "").trim();
+  if (!txt) return Array.from({ length: max }, (_, i) => i + 1);
+  const set = new Set();
+  txt.split(",").forEach((part) => {
+    const m = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!m) return;
+    const a = +m[1], b = m[2] ? +m[2] : a;
+    for (let n = Math.min(a, b); n <= Math.max(a, b); n++) if (n >= 1 && n <= max) set.add(n);
+  });
+  return [...set].sort((x, y) => x - y);
+}
+
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = () => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      res();
+    };
+    s.onerror = () => rej(new Error("Could not load the PDF reader. Check your internet connection."));
+    document.head.appendChild(s);
+  });
+}
+
+$("pdfBtn").onclick = async () => {
+  const file = $("pdfFile").files[0];
+  if (!file) return alert("Choose a PDF first.");
+  $("pdfBtn").disabled = true; $("pdfStatus").textContent = " Opening PDF…";
+  try {
+    await loadPdfJs();
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages = parseRange($("pdfPages").value, pdf.numPages);
+    if (!pages.length) throw new Error("No valid pages in that range (the PDF has " + pdf.numPages + " pages).");
+    if (pages.length > 150) throw new Error("Too many pages at once (max 150). Use the page range box.");
+    for (let k = 0; k < pages.length; k++) {
+      $("pdfStatus").textContent = " Converting page " + pages[k] + " (" + (k + 1) + " / " + pages.length + ")…";
+      const page = await pdf.getPage(pages[k]);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(1400 / base.width, 2200 / base.height, 3);
+      const vp = page.getViewport({ scale });
+      const c = document.createElement("canvas");
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.85));
+      items.push({ blob, url: URL.createObjectURL(blob), options: 4, correct: "", label: "" });
+    }
+    renderItems();
+    $("pdfStatus").textContent = " Added " + pages.length + " questions.";
+    $("pdfFile").value = "";
+  } catch (e) { $("pdfStatus").textContent = " Error: " + e.message; }
+  $("pdfBtn").disabled = false;
+};
+
+$("detectBtn").onclick = async () => {
+  const file = $("multiFile").files[0];
+  if (!file) return alert("Choose a photo first.");
+  $("detectBtn").disabled = true; $("detStatus").textContent = " Reading the photo… (can take 10–20 seconds)";
+  try {
+    const bmp = await createImageBitmap(file);
+    const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(bmp.width * s); cv.height = Math.round(bmp.height * s);
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.85));
+    const out = await api("detect", { method: "POST", headers: { "content-type": "image/jpeg" }, body: blob });
+    let qs = out.questions || [];
+    if (!qs.length) throw new Error("No questions found. Try a clearer photo.");
+    if (qs.every((q) => /^\d+$/.test(q.number))) qs = qs.slice().sort((a, b) => a.number - b.number);
+    for (const q of qs) {
+      const pad = 0.012;
+      const x1 = Math.max(0, q.box[0] - pad), y1 = Math.max(0, q.box[1] - pad);
+      const x2 = Math.min(1, q.box[2] + pad), y2 = Math.min(1, q.box[3] + pad);
+      const w = Math.round((x2 - x1) * cv.width), h = Math.round((y2 - y1) * cv.height);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(cv, x1 * cv.width, y1 * cv.height, w, h, 0, 0, w, h);
+      const cb = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88));
+      items.push({ blob: cb, url: URL.createObjectURL(cb), options: 4, correct: "", label: q.number });
+    }
+    renderItems();
+    $("detStatus").textContent = " Found " + qs.length + " questions. Check them below.";
+    $("multiFile").value = "";
+  } catch (e) { $("detStatus").textContent = " Error: " + e.message; }
+  $("detectBtn").disabled = false;
+};
+
 $("negOn").onchange = () => $("negBox").classList.toggle("hidden", !$("negOn").checked);
 
 $("createBtn").onclick = async () => {
@@ -157,7 +265,7 @@ $("createBtn").onclick = async () => {
     const qs = [];
     for (let i = 0; i < items.length; i++) {
       $("status").textContent = " Uploading question " + (i + 1) + " / " + items.length + "…";
-      qs.push({ img: await uploadBlob(items[i].blob), options: items[i].options, correct: items[i].correct || null });
+      qs.push({ img: await uploadBlob(items[i].blob), options: items[i].options, correct: items[i].correct || null, label: items[i].label || "" });
     }
     let sheet = null;
     const sf = $("sheetFile").files[0];
@@ -207,4 +315,3 @@ async function showResults(ex) {
 </script>
 </body>
 </html>
-
