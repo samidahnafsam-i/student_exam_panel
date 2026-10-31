@@ -1,1 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Exam</title>
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --text:#1c2333; --muted:#667085; --brand:#3b5bdb; --ok:#1f9d55; --bad:#d64545; --line:#e3e7ef; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --card:#1b2030; --text:#e8ebf3; --muted:#9aa3b5; --brand:#7c93ff; --ok:#3ecf7a; --bad:#ff6b6b; --line:#2b3248; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 6px; }
+  .muted { color: var(--muted); }
+  input[type=text] { width:100%; padding:12px; font-size:1rem; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); margin:10px 0; }
+  button { background:var(--brand); color:#fff; border:0; padding:12px 22px; border-radius:10px; font-size:1rem; cursor:pointer; }
+  button:disabled { opacity:.5; }
+  .bar { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); }
+  .bar .in { max-width:820px; margin:0 auto; padding:10px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .timer { font-variant-numeric: tabular-nums; font-weight:700; font-size:1.2rem; }
+  .timer.low { color: var(--bad); }
+  .qimg { width:100%; border-radius:10px; border:1px solid var(--line); background:#fff; }
+  .qno { font-weight:700; margin-bottom:8px; }
+  .opts { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .opt { flex:1 1 70px; text-align:center; }
+  .opt input { display:none; }
+  .opt span { display:block; padding:12px 0; border:2px solid var(--line); border-radius:10px; font-weight:700; cursor:pointer; user-select:none; }
+  .opt input:checked + span { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .opt.right span { border-color:var(--ok); background:var(--ok); color:#fff; }
+  .opt.wrong span { border-color:var(--bad); background:var(--bad); color:#fff; }
+  .score { font-size:2.4rem; font-weight:800; }
+  .hidden { display:none; }
+  .prog { font-size:.9rem; }
+</style>
+</head>
+<body>
+
+<div id="start" class="wrap hidden">
+  <div class="card">
+    <h1 id="sTitle"></h1>
+    <p class="muted" id="sInfo"></p>
+    <label>Your name</label>
+    <input type="text" id="name" placeholder="Enter your name" maxlength="80">
+    <button id="startBtn">Start exam</button>
+  </div>
+</div>
+
+<div id="exam" class="hidden">
+  <div class="bar"><div class="in">
+    <div><strong id="eTitle"></strong><div class="muted prog" id="prog"></div></div>
+    <div class="timer" id="timer">--:--</div>
+    <button id="submitBtn">Submit</button>
+  </div></div>
+  <div class="wrap" id="qs"></div>
+</div>
+
+<div id="result" class="wrap hidden">
+  <div class="card" style="text-align:center">
+    <div class="muted">Your score</div>
+    <div class="score" id="scoreTxt"></div>
+    <div class="muted" id="scoreSub"></div>
+  </div>
+  <div class="card hidden" id="sheetCard">
+    <h1>Answer sheet</h1>
+    <img id="sheetImg" class="qimg" alt="Answer sheet">
+  </div>
+  <div id="review"></div>
+</div>
+
+<div id="msg" class="wrap hidden"><div class="card"><h1 id="msgTxt"></h1></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const examId = new URLSearchParams(location.search).get("exam");
+let exam = null, answers = {}, endAt = 0, tick = null, done = false;
+
+function show(id) {
+  ["start","exam","result","msg"].forEach(x => $(x).classList.toggle("hidden", x !== id));
+  window.scrollTo(0, 0);
+}
+function message(t) { $("msgTxt").textContent = t; show("msg"); }
+
+async function init() {
+  if (!examId) return message("Open the exam link your teacher gave you.");
+  const r = await fetch("/api/exam/" + encodeURIComponent(examId));
+  if (!r.ok) return message("Exam not found.");
+  exam = await r.json();
+  $("sTitle").textContent = exam.title;
+  $("sInfo").textContent = exam.questions.length + " questions · " + exam.minutes + " minutes" +
+    (exam.negative > 0 ? " · Negative marking: −" + exam.negative + " per wrong answer" : "");
+  show("start");
+}
+
+$("startBtn").onclick = () => {
+  const name = $("name").value.trim();
+  if (!name) { $("name").focus(); return; }
+  $("eTitle").textContent = exam.title;
+  const box = $("qs"); box.innerHTML = "";
+  exam.questions.forEach((q) => {
+    const letters = "ABCDEF".slice(0, q.options).split("");
+    const d = document.createElement("div");
+    d.className = "card";
+    d.id = "q" + q.n;
+    d.innerHTML =
+      '<div class="qno">Question ' + q.n + '</div>' +
+      '<img class="qimg" loading="lazy" src="/api/img/' + q.img + '" alt="Question ' + q.n + '">' +
+      '<div class="opts">' + letters.map(l =>
+        '<label class="opt"><input type="radio" name="q' + q.n + '" value="' + l + '"><span>' + l + '</span></label>'
+      ).join("") + '</div>';
+    d.querySelectorAll("input").forEach(inp => inp.onchange = () => { answers[q.n] = inp.value; updateProg(); });
+    box.appendChild(d);
+  });
+  updateProg();
+  endAt = Date.now() + exam.minutes * 60000;
+  tick = setInterval(updateTimer, 500);
+  updateTimer();
+  show("exam");
+};
+
+function updateProg() {
+  $("prog").textContent = Object.keys(answers).length + " / " + exam.questions.length + " answered";
+}
+function updateTimer() {
+  const left = Math.max(0, endAt - Date.now());
+  const s = Math.ceil(left / 1000);
+  $("timer").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  $("timer").classList.toggle("low", s <= 60);
+  if (left <= 0) submit(true);
+}
+
+$("submitBtn").onclick = () => {
+  const missing = exam.questions.length - Object.keys(answers).length;
+  if (missing > 0 && !confirm(missing + " question(s) not answered. Submit anyway?")) return;
+  submit(false);
+};
+
+async function submit() {
+  if (done) return;
+  done = true; clearInterval(tick);
+  $("submitBtn").disabled = true;
+  const r = await fetch("/api/submit/" + encodeURIComponent(examId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: $("name").value.trim(), answers }),
+  });
+  if (!r.ok) { done = false; $("submitBtn").disabled = false; return alert("Submit failed. Try again."); }
+  const res = await r.json();
+  renderResult(res);
+}
+
+function renderResult(res) {
+  if (res.graded > 0) {
+    $("scoreTxt").textContent = res.score + " / " + res.graded;
+    $("scoreSub").textContent = Math.round(res.score / res.graded * 100) + "%" +
+      (res.negative > 0 ? " · " + res.right + " right, " + res.wrong + " wrong (−" + res.negative + " each)" : "");
+  } else {
+    $("scoreTxt").textContent = "Submitted";
+    $("scoreSub").textContent = "Your answers were recorded.";
+  }
+  if (res.sheet) { $("sheetImg").src = "/api/img/" + res.sheet; $("sheetCard").classList.remove("hidden"); }
+  const box = $("review"); box.innerHTML = "";
+  res.review.forEach((r) => {
+    const q = exam.questions[r.n - 1];
+    const letters = "ABCDEF".slice(0, q.options).split("");
+    const d = document.createElement("div");
+    d.className = "card";
+    d.innerHTML =
+      '<div class="qno">Question ' + r.n + '</div>' +
+      '<img class="qimg" loading="lazy" src="/api/img/' + q.img + '" alt="">' +
+      '<div class="opts">' + letters.map(l => {
+        let cls = "opt";
+        if (r.correct && l === r.correct) cls += " right";
+        else if (l === r.yours) cls += r.ok === true ? " right" : r.ok === false ? " wrong" : "";
+        return '<div class="' + cls + '"><span>' + l + '</span></div>';
+      }).join("") + '</div>' +
+      '<div class="muted" style="margin-top:8px">Your answer: ' + (r.yours || "—") +
+      (r.correct ? " · Correct: " + r.correct : r.ok === true ? " · ✓ Correct" : r.ok === false ? " · ✗ Wrong" : "") + '</div>';
+    box.appendChild(d);
+  });
+  show("result");
+}
+
+init();
+</script>
+</body>
+</html>
 
