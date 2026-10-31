@@ -1,1 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Exam Admin</title>
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --text:#1c2333; --muted:#667085; --brand:#3b5bdb; --bad:#d64545; --line:#e3e7ef; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --card:#1b2030; --text:#e8ebf3; --muted:#9aa3b5; --brand:#7c93ff; --bad:#ff6b6b; --line:#2b3248; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width: 960px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  h1 { font-size:1.4rem; margin:0 0 12px; } h2 { font-size:1.1rem; margin:0 0 12px; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; }
+  input[type=text], input[type=number], input[type=password], select { padding:10px; font-size:1rem; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); width:100%; }
+  button { background:var(--brand); color:#fff; border:0; padding:10px 18px; border-radius:10px; font-size:.95rem; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--brand); border:1px solid var(--brand); }
+  button.danger { background:var(--bad); }
+  button:disabled { opacity:.5; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; } .row > * { flex:1 1 180px; }
+  .q { display:flex; gap:12px; align-items:center; border:1px solid var(--line); border-radius:10px; padding:8px; margin-top:10px; }
+  .q img { width:90px; height:70px; object-fit:cover; border-radius:6px; }
+  .q .f { flex:1; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .q select { width:auto; }
+  table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); font-size:.9rem; }
+  .muted { color:var(--muted); } .hidden { display:none; }
+  .link { word-break:break-all; font-size:.9rem; }
+  .ex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid var(--line); }
+  .ex .t { flex:1 1 200px; }
+</style>
+</head>
+<body>
+
+<div id="login" class="wrap">
+  <div class="card" style="max-width:420px;margin:60px auto">
+    <h1>Admin login</h1>
+    <label>Password</label>
+    <input type="password" id="pw" autocomplete="current-password">
+    <p id="loginErr" class="muted"></p>
+    <button id="loginBtn">Login</button>
+  </div>
+</div>
+
+<div id="panel" class="wrap hidden">
+  <div class="card">
+    <h1>Create exam</h1>
+    <div class="row">
+      <div><label>Exam title</label><input type="text" id="title" placeholder="e.g. Physics Quiz 1"></div>
+      <div><label>Duration (minutes)</label><input type="number" id="minutes" value="30" min="1"></div>
+    </div>
+
+    <label>Question photos (select many; order = question number)</label>
+    <input type="file" id="qFiles" accept="image/*" multiple>
+    <div id="qList"></div>
+
+    <label>Answer sheet photo (optional)</label>
+    <input type="file" id="sheetFile" accept="image/*">
+
+    <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="negOn"> Turn on negative marking</label>
+    <div id="negBox" class="hidden" style="max-width:260px"><label>Marks deducted per wrong answer (each right answer = 1 mark)</label><input type="number" id="negVal" value="0.25" min="0" max="5" step="0.05"></div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="reveal" checked> After submitting, show students the correct answers and the answer sheet</label>
+    <p class="muted">The website checks every answer itself when the student submits. Untick the box above to show only right/wrong marks and the score.</p>
+    <p class="muted">Tip: set the correct option for each question above to get automatic scoring. Leave it as "—" to skip scoring.</p>
+    <button id="createBtn">Create exam</button>
+    <span id="status" class="muted"></span>
+    <div id="created" class="link"></div>
+  </div>
+
+  <div class="card">
+    <h2>Your exams</h2>
+    <div id="exams"></div>
+  </div>
+
+  <div class="card hidden" id="resCard">
+    <h2 id="resTitle">Results</h2>
+    <div style="overflow-x:auto">
+      <table><thead><tr><th>Name</th><th>Score</th><th>Submitted</th></tr></thead><tbody id="resBody"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let PW = sessionStorage.getItem("pw") || "";
+let items = []; // {blob, url, options, correct}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ "x-admin-password": PW }, opts.headers || {});
+  const r = await fetch("/api/admin/" + path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+async function tryLogin(pw) {
+  PW = pw;
+  try { await api("login"); sessionStorage.setItem("pw", pw); $("login").classList.add("hidden"); $("panel").classList.remove("hidden"); loadExams(); }
+  catch (e) { $("loginErr").textContent = e.message; }
+}
+$("loginBtn").onclick = () => tryLogin($("pw").value);
+$("pw").onkeydown = (e) => { if (e.key === "Enter") tryLogin($("pw").value); };
+if (PW) tryLogin(PW);
+
+// shrink photos so uploads stay small and fast
+async function compress(file, max = 1400, quality = 0.82) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", quality));
+}
+
+$("qFiles").onchange = async (e) => {
+  const files = [...e.target.files];
+  for (const f of files) {
+    const blob = await compress(f);
+    items.push({ blob, url: URL.createObjectURL(blob), options: 4, correct: "" });
+  }
+  e.target.value = "";
+  renderItems();
+};
+
+function renderItems() {
+  const box = $("qList"); box.innerHTML = "";
+  items.forEach((it, i) => {
+    const d = document.createElement("div"); d.className = "q";
+    const letters = "ABCDEF".slice(0, it.options).split("");
+    d.innerHTML =
+      '<img src="' + it.url + '"><div class="f"><strong>Q' + (i + 1) + '</strong>' +
+      '<span>Options <select data-k="options">' + [2,3,4,5,6].map(n => '<option ' + (n === it.options ? "selected" : "") + '>' + n + '</option>').join("") + '</select></span>' +
+      '<span>Correct <select data-k="correct"><option value="">—</option>' + letters.map(l => '<option ' + (l === it.correct ? "selected" : "") + '>' + l + '</option>').join("") + '</select></span>' +
+      '</div><button class="ghost" data-up>↑</button><button class="danger" data-del>✕</button>';
+    d.querySelector('[data-k="options"]').onchange = (e) => { it.options = +e.target.value; if (it.correct && "ABCDEF".indexOf(it.correct) >= it.options) it.correct = ""; renderItems(); };
+    d.querySelector('[data-k="correct"]').onchange = (e) => { it.correct = e.target.value; };
+    d.querySelector("[data-del]").onclick = () => { items.splice(i, 1); renderItems(); };
+    d.querySelector("[data-up]").onclick = () => { if (i > 0) { [items[i-1], items[i]] = [items[i], items[i-1]]; renderItems(); } };
+    box.appendChild(d);
+  });
+}
+
+async function uploadBlob(blob) {
+  const r = await api("image", { method: "POST", headers: { "content-type": "image/jpeg" }, body: blob });
+  return r.key;
+}
+
+$("negOn").onchange = () => $("negBox").classList.toggle("hidden", !$("negOn").checked);
+
+$("createBtn").onclick = async () => {
+  if (!items.length) return alert("Add at least one question photo.");
+  $("createBtn").disabled = true; $("created").textContent = "";
+  try {
+    const qs = [];
+    for (let i = 0; i < items.length; i++) {
+      $("status").textContent = " Uploading question " + (i + 1) + " / " + items.length + "…";
+      qs.push({ img: await uploadBlob(items[i].blob), options: items[i].options, correct: items[i].correct || null });
+    }
+    let sheet = null;
+    const sf = $("sheetFile").files[0];
+    if (sf) { $("status").textContent = " Uploading answer sheet…"; sheet = await uploadBlob(await compress(sf, 1800)); }
+    $("status").textContent = " Saving…";
+    const r = await api("exam", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: $("title").value, minutes: $("minutes").value, questions: qs, sheet, reveal: $("reveal").checked, negative: $("negOn").checked ? $("negVal").value : 0 }) });
+    const link = location.origin + "/?exam=" + r.id;
+    $("created").innerHTML = "Exam link: <a href='" + link + "' target='_blank'>" + link + "</a>";
+    $("status").textContent = " Done.";
+    items = []; renderItems(); $("sheetFile").value = ""; $("title").value = "";
+    loadExams();
+  } catch (e) { $("status").textContent = " Error: " + e.message; }
+  $("createBtn").disabled = false;
+};
+
+async function loadExams() {
+  const list = await api("exams");
+  const box = $("exams"); box.innerHTML = list.length ? "" : '<p class="muted">No exams yet.</p>';
+  list.forEach((ex) => {
+    const link = location.origin + "/?exam=" + ex.id;
+    const d = document.createElement("div"); d.className = "ex";
+    d.innerHTML = '<div class="t"><strong></strong><div class="muted">' + ex.count + ' questions · ' + ex.minutes + ' min</div></div>' +
+      '<button class="ghost" data-copy>Copy link</button><button class="ghost" data-res>Results</button><button class="danger" data-del>Delete</button>';
+    d.querySelector("strong").textContent = ex.title;
+    d.querySelector("[data-copy]").onclick = () => { navigator.clipboard.writeText(link); alert("Link copied:\n" + link); };
+    d.querySelector("[data-res]").onclick = () => showResults(ex);
+    d.querySelector("[data-del]").onclick = async () => { if (confirm("Delete this exam and all results?")) { await api("exam/" + ex.id, { method: "DELETE" }); $("resCard").classList.add("hidden"); loadExams(); } };
+    box.appendChild(d);
+  });
+}
+
+async function showResults(ex) {
+  const rows = await api("results/" + ex.id);
+  $("resTitle").textContent = "Results — " + ex.title + " (" + rows.length + ")";
+  const tb = $("resBody"); tb.innerHTML = "";
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    const score = r.graded ? r.score + " / " + r.graded : "—";
+    tr.innerHTML = "<td></td><td>" + score + "</td><td>" + new Date(r.at).toLocaleString() + "</td>";
+    tr.firstChild.textContent = r.name;
+    tb.appendChild(tr);
+  });
+  $("resCard").classList.remove("hidden");
+  $("resCard").scrollIntoView({ behavior: "smooth" });
+}
+</script>
+</body>
+</html>
 
