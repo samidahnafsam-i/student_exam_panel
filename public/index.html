@@ -32,6 +32,12 @@
   .opt.right span { border-color:var(--ok); background:var(--ok); color:#fff; }
   .opt.wrong span { border-color:var(--bad); background:var(--bad); color:#fff; }
   .score { font-size:2.4rem; font-weight:800; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-top:14px; text-align:center; }
+  .stat { border:1px solid var(--line); border-radius:10px; padding:10px 6px; }
+  .stat b { display:block; font-size:1.4rem; }
+  .stat.good b { color:var(--ok); } .stat.bad b { color:var(--bad); }
+  .opt.sel span { border-color:var(--brand); background:var(--brand); color:#fff; }
+  .note { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-top:12px; font-size:.9rem; text-align:left; }
   .hidden { display:none; }
   .prog { font-size:.9rem; }
 </style>
@@ -62,6 +68,8 @@
     <div class="muted">Your score</div>
     <div class="score" id="scoreTxt"></div>
     <div class="muted" id="scoreSub"></div>
+    <div class="stats" id="stats"></div>
+    <div class="note hidden" id="notScoredNote"></div>
   </div>
   <div class="card hidden" id="sheetCard">
     <h1>Answer sheet</h1>
@@ -90,7 +98,8 @@ async function init() {
   exam = await r.json();
   $("sTitle").textContent = exam.title;
   $("sInfo").textContent = exam.questions.length + " questions · " + exam.minutes + " minutes" +
-    (exam.negative > 0 ? " · Negative marking: −" + exam.negative + " per wrong answer" : "");
+    (exam.negative > 0 ? " · Negative marking: −" + exam.negative + " per wrong answer (unanswered questions are not penalised)" : "") +
+    (exam.scored === false ? " · Your answers will be recorded and marked by your teacher." : "");
   show("start");
 }
 
@@ -105,7 +114,7 @@ $("startBtn").onclick = () => {
     d.className = "card";
     d.id = "q" + q.n;
     d.innerHTML =
-      '<div class="qno">Question ' + q.n + '</div>' +
+      '<div class="qno">Question ' + (q.label || q.n) + '</div>' +
       '<img class="qimg" loading="lazy" src="/api/img/' + q.img + '" alt="Question ' + q.n + '">' +
       '<div class="opts">' + letters.map(l =>
         '<label class="opt"><input type="radio" name="q' + q.n + '" value="' + l + '"><span>' + l + '</span></label>'
@@ -152,32 +161,57 @@ async function submit() {
 }
 
 function renderResult(res) {
-  if (res.graded > 0) {
-    $("scoreTxt").textContent = res.score + " / " + res.graded;
-    $("scoreSub").textContent = Math.round(res.score / res.graded * 100) + "%" +
-      (res.negative > 0 ? " · " + res.right + " right, " + res.wrong + " wrong (−" + res.negative + " each)" : "");
+  const stat = (label, value, cls) => '<div class="stat ' + (cls || "") + '"><b>' + value + '</b>' + label + '</div>';
+  const answered = res.review.filter((r) => r.yours).length;
+  let stats, big, sub;
+  if (res.scored) {
+    big = res.score + " / " + res.maxScore;
+    sub = res.maxScore > 0 ? Math.round(res.score / res.maxScore * 100) + "%" : "";
+    stats = stat("Total questions", res.total) + stat("Correct", res.right, "good") + stat("Incorrect", res.wrong, "bad") + stat("Unanswered", res.unanswered) +
+      (res.notScored ? stat("Not scored", res.notScored) : "") +
+      stat("Marks obtained", res.marks) +
+      (res.negative > 0 ? stat("Negative marks deducted", res.negativeMarks > 0 ? "−" + res.negativeMarks : "0", res.negativeMarks > 0 ? "bad" : "") : "") +
+      stat("Final score", res.score);
   } else {
-    $("scoreTxt").textContent = "Submitted";
-    $("scoreSub").textContent = "Your answers were recorded.";
+    big = "Submitted";
+    sub = "Your answers were recorded. This exam is marked by your teacher.";
+    stats = stat("Total questions", res.total) + stat("Answered", answered) + stat("Unanswered", res.total - answered);
   }
+  $("scoreTxt").textContent = big;
+  $("scoreSub").textContent = sub;
+  $("stats").innerHTML = stats;
+  $("notScoredNote").classList.toggle("hidden", !(res.scored && res.notScored));
+  if (res.notScored) $("notScoredNote").textContent = res.notScored + " question" + (res.notScored === 1 ? " was" : "s were") + " not scored because no valid answer key is available for " + (res.notScored === 1 ? "it" : "them") + ". The score above is out of " + res.maxScore + ".";
   if (res.sheet) { $("sheetImg").src = "/api/img/" + res.sheet; $("sheetCard").classList.remove("hidden"); }
+
   const box = $("review"); box.innerHTML = "";
   res.review.forEach((r) => {
     const q = exam.questions[r.n - 1];
     const letters = "ABCDEF".slice(0, q.options).split("");
     const d = document.createElement("div");
     d.className = "card";
-    d.innerHTML =
-      '<div class="qno">Question ' + r.n + '</div>' +
-      '<img class="qimg" loading="lazy" src="/api/img/' + q.img + '" alt="">' +
-      '<div class="opts">' + letters.map(l => {
-        let cls = "opt";
+    let line;
+    const opts = letters.map((l) => {
+      let cls = "opt";
+      if (res.reveal) {
         if (r.correct && l === r.correct) cls += " right";
-        else if (l === r.yours) cls += r.ok === true ? " right" : r.ok === false ? " wrong" : "";
-        return '<div class="' + cls + '"><span>' + l + '</span></div>';
-      }).join("") + '</div>' +
-      '<div class="muted" style="margin-top:8px">Your answer: ' + (r.yours || "—") +
-      (r.correct ? " · Correct: " + r.correct : r.ok === true ? " · ✓ Correct" : r.ok === false ? " · ✗ Wrong" : "") + '</div>';
+        else if (l === r.yours && r.status === "wrong") cls += " wrong";
+      } else if (l === r.yours) cls += " sel";
+      return '<div class="' + cls + '"><span>' + l + '</span></div>';
+    }).join("");
+    if (res.reveal) {
+      if (r.status === "correct") line = "✓ Correct — your answer: " + r.yours;
+      else if (r.status === "wrong") line = "✗ Wrong — your answer: " + r.yours + " · correct: " + r.correct;
+      else if (r.status === "unanswered") line = "Not answered · correct: " + r.correct;
+      else line = "Your answer: " + (r.yours || "—") + " · not scored (no answer key)";
+    } else {
+      line = r.yours ? "Your answer: " + r.yours : "Not answered";
+    }
+    d.innerHTML =
+      '<div class="qno">Question ' + (q.label || r.n) + '</div>' +
+      '<img class="qimg" loading="lazy" src="/api/img/' + q.img + '" alt="">' +
+      '<div class="opts">' + opts + '</div>' +
+      '<div class="muted" style="margin-top:8px">' + line + '</div>';
     box.appendChild(d);
   });
   show("result");
@@ -187,4 +221,3 @@ init();
 </script>
 </body>
 </html>
-
