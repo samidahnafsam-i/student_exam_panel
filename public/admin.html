@@ -6,9 +6,9 @@
 <meta name="robots" content="noindex">
 <title>Exam Admin</title>
 <style>
-  :root { --bg:#f4f6fb; --card:#fff; --text:#1c2333; --muted:#667085; --brand:#3b5bdb; --bad:#d64545; --line:#e3e7ef; }
+  :root { --bg:#f4f6fb; --card:#fff; --text:#1c2333; --muted:#667085; --brand:#3b5bdb; --bad:#d64545; --ok:#1f9d55; --warn:#b7791f; --line:#e3e7ef; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#12151c; --card:#1b2030; --text:#e8ebf3; --muted:#9aa3b5; --brand:#7c93ff; --bad:#ff6b6b; --line:#2b3248; }
+    :root { --bg:#12151c; --card:#1b2030; --text:#e8ebf3; --muted:#9aa3b5; --brand:#7c93ff; --bad:#ff6b6b; --ok:#3ecf7a; --warn:#e0a84a; --line:#2b3248; }
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
@@ -31,6 +31,25 @@
   .link { word-break:break-all; font-size:.9rem; }
   .ex { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid var(--line); }
   .ex .t { flex:1 1 200px; }
+  .box { border:1px dashed var(--line); border-radius:10px; padding:12px; margin-top:12px; }
+  .box.key { border:1px solid var(--brand); }
+  .box h2 { margin-bottom:4px; }
+  .note { border-radius:10px; padding:10px 12px; margin:10px 0; font-size:.9rem; border:1px solid var(--line); }
+  .note.bad { border-color:var(--bad); color:var(--bad); }
+  .note.warn { border-color:var(--warn); }
+  .note ul { margin:6px 0 0 18px; padding:0; }
+  progress { width:100%; height:12px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:.78rem; font-weight:600; white-space:nowrap; }
+  .pill.ok { background:rgba(31,157,85,.16); color:var(--ok); }
+  .pill.warn { background:rgba(183,121,31,.2); color:var(--warn); }
+  .pill.bad { background:rgba(214,69,69,.16); color:var(--bad); }
+  #keyTable td select { width:auto; min-width:64px; padding:6px; }
+  #keyTable tr.warn td { background:rgba(183,121,31,.09); }
+  #keyTable tr.bad td { background:rgba(214,69,69,.08); }
+  #keyTable img { width:44px; height:34px; object-fit:cover; border-radius:4px; vertical-align:middle; margin-right:6px; }
+  #keyTable .small { font-size:.8rem; color:var(--muted); }
+  button.small { padding:4px 10px; font-size:.8rem; }
+  .keyline { word-break:break-word; font-size:.85rem; color:var(--muted); padding:6px 0; }
 </style>
 </head>
 <body>
@@ -74,14 +93,48 @@
     <input type="file" id="qFiles" accept="image/*" multiple>
     <div id="qList"></div>
 
-    <label>Answer sheet photo (optional)</label>
+    <div class="box key" id="keyBox">
+      <h2>Answer key (PDF)</h2>
+      <p class="muted" style="margin:0 0 8px">Upload a PDF that lists the correct answers (text or scanned). It is used only for grading and is <strong>never shown to students</strong>. This is not the student-facing answer sheet further down.</p>
+      <input type="file" id="keyFile" accept="application/pdf,.pdf">
+      <div class="row" style="margin-top:6px;align-items:end">
+        <div><label>Pages to read (optional, e.g. 2-3 or 1,4)</label><input type="text" id="keyPages" placeholder="all pages"></div>
+        <div><label>If questions have no number label: key number of the first question</label><input type="number" id="keyOffset" value="1" min="1" max="999"></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="keyForceOcr"> Read with OCR even if the PDF has text (use if the text comes out garbled)</label>
+      <div style="margin-top:8px">
+        <button type="button" id="keyBtn">Extract Answers</button>
+        <button type="button" id="keyCancel" class="ghost hidden">Cancel</button>
+      </div>
+      <div id="keyProgBox" class="hidden" style="margin-top:8px"><progress id="keyProg" max="100" value="0"></progress><div id="keyMsg" class="muted" style="font-size:.9rem"></div></div>
+      <div id="keyErr" class="note bad hidden" role="alert"></div>
+
+      <div id="keyReview" class="hidden">
+        <h2 style="margin-top:14px">Review extracted answers</h2>
+        <div id="keySummary" style="font-weight:600"></div>
+        <div id="keyOcrNote" class="note warn hidden">These answers were read with OCR (text recognition from an image). Please compare them with the PDF before applying — OCR can misread letters.</div>
+        <div id="keyWarn" class="note warn hidden"></div>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="keyOnlyIssues"> Show only rows that need attention</label>
+        <div style="overflow-x:auto;margin-top:6px">
+          <table id="keyTable"><thead><tr><th>Question</th><th>Exam question</th><th>Extracted answer</th><th>Status</th></tr></thead><tbody id="keyBody"></tbody></table>
+        </div>
+        <p class="muted" style="margin:6px 0">Nothing is applied until you press the button. You can change any answer in the table first; invalid, ambiguous and conflicting entries are never applied.</p>
+        <button type="button" id="keyApplyBtn">Apply Answers to Questions</button>
+        <button type="button" id="keyClearBtn" class="ghost">Discard</button>
+        <span id="keyApplied" class="muted"></span>
+      </div>
+      <div id="keyCoverage" style="margin-top:10px;font-weight:600"></div>
+      <p class="muted" style="margin:4px 0 0">You can also choose each correct option by hand in the question list above; manual choices and PDF answers can be mixed.</p>
+    </div>
+
+    <label>Student answer sheet photo (optional — shown to students after they submit, only if "show correct answers" below is ticked)</label>
     <input type="file" id="sheetFile" accept="image/*">
 
     <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="negOn"> Turn on negative marking</label>
-    <div id="negBox" class="hidden" style="max-width:260px"><label>Marks deducted per wrong answer (each right answer = 1 mark)</label><input type="number" id="negVal" value="0.25" min="0" max="5" step="0.05"></div>
+    <div id="negBox" class="hidden" style="max-width:260px"><label>Marks deducted per wrong answer (each right answer = 1 mark; unanswered questions are never penalised)</label><input type="number" id="negVal" value="0.25" min="0" max="5" step="0.05"></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="reveal" checked> After submitting, show students the correct answers and the answer sheet</label>
-    <p class="muted">The website checks every answer itself when the student submits. Untick the box above to show only right/wrong marks and the score.</p>
-    <p class="muted">Tip: set the correct option for each question above to get automatic scoring. Leave it as "—" to skip scoring.</p>
+    <p class="muted">Grading is independent of this box: every submission is always scored on the server from the saved answer key. Untick it to show students only their totals (correct / wrong / unanswered / score) and their own selections.</p>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="manualGrade"> Create without an answer key (students' answers are saved but not scored; I will grade manually)</label>
     <button id="createBtn">Create exam</button>
     <span id="status" class="muted"></span>
     <div id="created" class="link"></div>
@@ -95,11 +148,12 @@
   <div class="card hidden" id="resCard">
     <h2 id="resTitle">Results</h2>
     <div style="overflow-x:auto">
-      <table><thead><tr><th>Name</th><th>Score</th><th>Submitted</th></tr></thead><tbody id="resBody"></tbody></table>
+      <table><thead><tr><th>Name</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Unanswered</th><th>Submitted</th></tr></thead><tbody id="resBody"></tbody></table>
     </div>
   </div>
 </div>
 
+<script src="answerkey.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let PW = sessionStorage.getItem("pw") || "";
@@ -152,13 +206,14 @@ function renderItems() {
       '<span>Options <select data-k="options">' + [2,3,4,5,6].map(n => '<option ' + (n === it.options ? "selected" : "") + '>' + n + '</option>').join("") + '</select></span>' +
       '<span>Correct <select data-k="correct"><option value="">—</option>' + letters.map(l => '<option ' + (l === it.correct ? "selected" : "") + '>' + l + '</option>').join("") + '</select></span>' +
       '</div><button class="ghost" data-up>↑</button><button class="danger" data-del>✕</button>';
-    d.querySelector('[data-k="label"]').oninput = (e) => { it.label = e.target.value; };
+    d.querySelector('[data-k="label"]').oninput = (e) => { it.label = e.target.value; onItemsChanged(); };
     d.querySelector('[data-k="options"]').onchange = (e) => { it.options = +e.target.value; if (it.correct && "ABCDEF".indexOf(it.correct) >= it.options) it.correct = ""; renderItems(); };
-    d.querySelector('[data-k="correct"]').onchange = (e) => { it.correct = e.target.value; };
+    d.querySelector('[data-k="correct"]').onchange = (e) => { it.correct = e.target.value; if (keyMeta) keyMeta.touched = true; onItemsChanged(); };
     d.querySelector("[data-del]").onclick = () => { items.splice(i, 1); renderItems(); };
     d.querySelector("[data-up]").onclick = () => { if (i > 0) { [items[i-1], items[i]] = [items[i], items[i-1]]; renderItems(); } };
     box.appendChild(d);
   });
+  onItemsChanged();
 }
 
 async function uploadBlob(blob) {
@@ -256,27 +311,247 @@ $("detectBtn").onclick = async () => {
   $("detectBtn").disabled = false;
 };
 
+/* ================= Answer key (PDF) ================= */
+const AK = window.AnswerKey;
+const LET = "ABCDEF";
+let keyState = null;  // {fileName, method, consolidated, warnings, edits, ignored, pending, sig}
+let keyMeta = null;   // set when answers were applied: {fileName, method, detected, touched}
+let keyAbort = null;
+const validCorrect = (it) => !!it.correct && LET.indexOf(it.correct) >= 0 && LET.indexOf(it.correct) < it.options;
+
+function updateKeyStatus() {
+  const el = $("keyCoverage");
+  if (!items.length) { el.textContent = ""; return; }
+  const k = items.filter(validCorrect).length;
+  el.textContent = "Answer key set for " + k + " of " + items.length + " question" + (items.length === 1 ? "" : "s") + (k < items.length ? " — the others will not be scored." : ".");
+  el.style.color = k === items.length ? "var(--ok)" : "var(--warn)";
+}
+function onItemsChanged() { updateKeyStatus(); if (keyState) refreshReview(); }
+
+function keyError(msg) { const e = $("keyErr"); e.textContent = msg; e.classList.remove("hidden"); }
+function keyErrorClear() { $("keyErr").classList.add("hidden"); }
+function keyProgress(p) {
+  $("keyProgBox").classList.remove("hidden");
+  $("keyProg").value = Math.round((p.fraction || 0) * 100);
+  $("keyMsg").textContent = p.message || "";
+}
+
+// --- browser adapters for the shared pipeline in answerkey.js ---
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error("could not download " + src));
+    document.head.appendChild(sc);
+  });
+}
+async function renderPageForOcr(page, width) {
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(width / base.width, 6000 / base.height);
+  const vp = page.getViewport({ scale });
+  const c = document.createElement("canvas");
+  c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  return c;
+}
+// OCR engine is downloaded ONLY when a PDF actually needs it.
+async function createBrowserOcr(log) {
+  if (!window.Tesseract) await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js");
+  let onFrac = () => {};
+  const worker = await Tesseract.createWorker("eng", 1, { logger: (m) => { log(m); if (m.status === "recognizing text") onFrac(m.progress || 0); } });
+  return {
+    async recognize(canvas, cb) { if (cb) onFrac = cb; const { data } = await worker.recognize(canvas); canvas.width = canvas.height = 0; return data; },
+    terminate: () => worker.terminate(),
+  };
+}
+
+$("keyBtn").onclick = async () => {
+  keyErrorClear();
+  const file = $("keyFile").files[0];
+  if (!file) return keyError("Choose the answer-key PDF first.");
+  if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) return keyError("That file is not a PDF. Please choose a .pdf file.");
+  if (file.size > 40 * 1024 * 1024) return keyError("That PDF is larger than 40 MB. Use a smaller file or a page range.");
+  if (!items.length) return keyError("Add the question photos first, so the answers can be matched to them.");
+  let pages;
+  if ($("keyPages").value.trim()) {
+    pages = parseRange($("keyPages").value, 9999);
+    if (!pages.length) return keyError("That page range is not valid. Use something like 2-3 or 1,4,6-8.");
+  }
+  keyAbort = { cancelled: false };
+  $("keyBtn").disabled = true; $("keyCancel").classList.remove("hidden");
+  keyProgress({ fraction: 0, message: "Starting…" });
+  try {
+    await loadPdfJs();
+    const r = await AK.extractFromPdf(await file.arrayBuffer(),
+      { pdfjsLib, createOcr: createBrowserOcr, renderPage: renderPageForOcr },
+      { pages, forceOcr: $("keyForceOcr").checked, signal: keyAbort, onProgress: keyProgress });
+    const consolidated = AK.consolidate(r.entries);
+    keyState = { fileName: file.name, method: r.method, consolidated, warnings: r.warnings, edits: {}, ignored: [], pending: true, sig: "" };
+    $("keyApplied").textContent = "";
+    $("keyOcrNote").classList.toggle("hidden", r.method.indexOf("ocr") < 0);
+    renderReview();
+    if (!consolidated.length)
+      keyError("No answers could be recognised in this PDF (" + (r.method.indexOf("ocr") < 0 ? "its text has no answer list; if it is a scan, tick “Read with OCR”" : "even with OCR") + "). You can type the answers into the table below, or pick them in the question list.");
+    $("keyMsg").textContent = "Read " + consolidated.length + " answer" + (consolidated.length === 1 ? "" : "s") + " from " + r.pageCount + " page" + (r.pageCount === 1 ? "" : "s") + " (" + ({ text: "PDF text", ocr: "OCR", "text+ocr": "PDF text + OCR" })[r.method] + "). Review them below.";
+    $("keyReview").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) {
+    keyError(e.name === "KeyExtractError" ? e.message : "Unexpected problem while reading the PDF: " + (e.message || e));
+    $("keyProgBox").classList.add("hidden");
+  }
+  $("keyBtn").disabled = false; $("keyCancel").classList.add("hidden");
+};
+$("keyCancel").onclick = () => { if (keyAbort) keyAbort.cancelled = true; $("keyMsg").textContent = "Cancelling…"; };
+$("keyFile").onchange = () => { keyErrorClear(); };
+$("keyOffset").oninput = () => { if (keyState) refreshReview(); };
+$("keyOnlyIssues").onchange = () => applyFilter();
+$("keyClearBtn").onclick = () => {
+  if (keyState && keyState.pending && !confirm("Discard the extracted answers? Nothing has been applied yet.")) return;
+  keyState = null; $("keyReview").classList.add("hidden"); $("keyProgBox").classList.add("hidden"); $("keyFile").value = ""; keyErrorClear();
+};
+
+function currentRows() {
+  return AK.buildRows(keyState.consolidated, items.map((it) => ({ label: it.label || "", options: it.options })),
+    { offset: parseInt($("keyOffset").value, 10) || 1, edits: keyState.edits, ignored: keyState.ignored });
+}
+function rowSig(rows) { return rows.map((r) => r.q + "/" + r.itemIndex + "/" + (r.itemIndex >= 0 ? items[r.itemIndex].options : 6)).join(","); }
+
+function renderReview() { $("keyReview").classList.remove("hidden"); fillReview(true); }
+function refreshReview() { if (!keyState || $("keyReview").classList.contains("hidden")) return; fillReview(false); }
+
+function fillReview(force) {
+  const { rows, summary } = currentRows();
+  const sig = rowSig(rows);
+  const tb = $("keyBody");
+  if (force || sig !== keyState.sig) {
+    keyState.sig = sig; tb.innerHTML = "";
+    rows.forEach((row) => tb.appendChild(makeRow(row)));
+  }
+  [...tb.children].forEach((tr, i) => paintRow(tr, rows[i]));
+  // summary
+  $("keySummary").textContent = "Detected " + summary.detected + " answer" + (summary.detected === 1 ? "" : "s") + " · " + summary.matched + " match exam questions · " + summary.applicable + " ready to apply · " + summary.examQuestions + " exam question" + (summary.examQuestions === 1 ? "" : "s");
+  const w = $("keyWarn"); w.innerHTML = "";
+  const warnings = summary.warnings.concat(keyState.warnings || []);
+  if (warnings.length) { const ul = document.createElement("ul"); warnings.forEach((t) => { const li = document.createElement("li"); li.textContent = t; ul.appendChild(li); }); w.appendChild(ul); }
+  w.classList.toggle("hidden", !warnings.length);
+  $("keyApplyBtn").disabled = summary.applicable === 0;
+  applyFilter();
+}
+
+function makeRow(row) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = "<td data-c=q></td><td data-c=x></td><td data-c=a></td><td data-c=s></td>";
+  tr.querySelector("[data-c=q]").textContent = row.q == null ? "—" : row.q;
+  const x = tr.querySelector("[data-c=x]");
+  if (row.itemIndex >= 0) {
+    const img = document.createElement("img"); img.src = items[row.itemIndex].url; img.alt = "";
+    x.appendChild(img);
+    const sp = document.createElement("span"); sp.className = "small";
+    sp.textContent = "#" + (row.itemIndex + 1) + (row.matchedBy === "label" ? " by label" : " by order");
+    x.appendChild(sp);
+  } else {
+    x.textContent = row.status === "nolabel" ? "#" + (row.itemIndex + 1) : "none";
+    x.className = "small";
+  }
+  const cell = tr.querySelector("[data-c=a]");
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "Answer for question " + (row.q == null ? "without number" : row.q));
+  const n = row.itemIndex >= 0 ? items[row.itemIndex].options : 6;
+  sel.innerHTML = '<option value="">—</option>' + LET.slice(0, n).split("").map((l) => "<option>" + l + "</option>").join("");
+  sel.disabled = row.q == null || row.status === "labelclash";
+  sel.onchange = () => { keyState.edits[row.q] = sel.value; keyState.pending = true; refreshReview(); };
+  cell.appendChild(sel);
+  if (row.status === "unmatched") {
+    const b = document.createElement("button"); b.type = "button"; b.className = "ghost small"; b.textContent = "Ignore"; b.style.marginLeft = "6px";
+    b.onclick = () => { keyState.ignored.push(row.q); refreshReview(); };
+    cell.appendChild(b);
+  }
+  return tr;
+}
+
+function paintRow(tr, row) {
+  const info = AK.STATUS_INFO[row.status] || { label: row.status, level: "bad" };
+  tr.className = info.level === "ok" ? "" : info.level; tr.dataset.level = info.level;
+  const sel = tr.querySelector("select");
+  if (row.answer && ![...sel.options].some((o) => o.value === row.answer)) { const o = document.createElement("option"); o.textContent = row.answer; sel.appendChild(o); }
+  sel.value = row.answer || "";
+  const sc = tr.querySelector("[data-c=s]"); sc.innerHTML = "";
+  const pill = document.createElement("span"); pill.className = "pill " + info.level;
+  pill.textContent = row.status === "valid" && row.edited ? "Valid (edited)" : info.label;
+  sc.appendChild(pill);
+  const note = (row.status === "valid" && row.edited ? "" : row.note) + (row.pages && row.pages.length && row.status !== "valid" ? " (page " + row.pages.join(", ") + ")" : "");
+  if (note) { const d = document.createElement("div"); d.className = "small"; d.textContent = note; sc.appendChild(d); }
+}
+
+function applyFilter() {
+  const only = $("keyOnlyIssues").checked;
+  [...$("keyBody").children].forEach((tr) => tr.classList.toggle("hidden", only && tr.dataset.level === "ok"));
+}
+
+$("keyApplyBtn").onclick = () => {
+  if (!keyState) return;
+  const { rows, summary } = currentRows();
+  const todo = AK.applyRows(rows);
+  if (!todo.length) return alert("There is nothing valid to apply yet.");
+  const review = rows.filter((r) => r.canApply && (r.status === "review" || r.status === "duplicate")).length;
+  const blocked = rows.filter((r) => !r.canApply && r.q != null && r.itemIndex >= 0 && r.hasExtract).length;
+  const unmatched = summary.unmatched;
+  const changed = todo.filter((t) => items[t.index].correct && items[t.index].correct !== t.answer).length;
+  const noAnswer = items.length - new Set(todo.map((t) => t.index).concat(items.map((it, i) => (validCorrect(it) ? i : -1)).filter((i) => i >= 0))).size;
+  let msg = "Apply " + todo.length + " answer" + (todo.length === 1 ? "" : "s") + " to the exam questions?\n";
+  if (review) msg += "\n• " + review + " marked “Needs review” / duplicate will be applied as shown.";
+  if (blocked) msg += "\n• " + blocked + " invalid, ambiguous, conflicting or out-of-range entr" + (blocked === 1 ? "y" : "ies") + " will NOT be applied.";
+  if (unmatched) msg += "\n• " + unmatched + " key number" + (unmatched === 1 ? "" : "s") + " match no question.";
+  if (changed) msg += "\n• " + changed + " answer" + (changed === 1 ? "" : "s") + " you had picked by hand will be replaced.";
+  if (noAnswer > 0) msg += "\n• " + noAnswer + " question" + (noAnswer === 1 ? "" : "s") + " will still have no correct answer.";
+  if (!confirm(msg)) return;
+  todo.forEach((t) => { items[t.index].correct = t.answer; });
+  keyMeta = { fileName: keyState.fileName, method: keyState.method, detected: keyState.consolidated.length, touched: false };
+  keyState.pending = false;
+  renderItems();
+  $("keyApplied").textContent = " Applied " + todo.length + " answer" + (todo.length === 1 ? "" : "s") + " to the questions above.";
+};
+
+/* ================= Create exam ================= */
 $("negOn").onchange = () => $("negBox").classList.toggle("hidden", !$("negOn").checked);
 
 $("createBtn").onclick = async () => {
   if (!items.length) return alert("Add at least one question photo.");
+  // ---- validate BEFORE uploading anything ----
+  const keyed = items.filter(validCorrect).length;
+  if (keyed === 0 && !$("manualGrade").checked)
+    return alert("This exam has no answer key, so nothing could be graded.\n\nUpload the answer-key PDF and press “Extract Answers” then “Apply Answers to Questions”, pick the correct options in the question list, or tick “Create without an answer key” to grade manually.");
+  const warn = [];
+  if (keyState && keyState.pending) warn.push("You extracted answers from a PDF but have not applied them (or changed them since). They are NOT part of this exam.");
+  if (keyed > 0 && keyed < items.length) warn.push((items.length - keyed) + " of " + items.length + " questions have no correct answer. They will be recorded but NOT scored.");
+  if (keyed === 0) warn.push("No answer key: students' answers will be saved but not scored.");
+  const labels = items.map((it) => String(it.label || "").trim()).filter(Boolean);
+  const dup = labels.filter((l, i) => labels.indexOf(l) !== i);
+  if (dup.length) warn.push("Some question numbers are used twice (" + [...new Set(dup)].join(", ") + ").");
+  if (warn.length && !confirm(warn.map((w) => "• " + w).join("\n") + "\n\nCreate the exam anyway?")) return;
+
   $("createBtn").disabled = true; $("created").textContent = "";
   try {
     const qs = [];
     for (let i = 0; i < items.length; i++) {
       $("status").textContent = " Uploading question " + (i + 1) + " / " + items.length + "…";
-      qs.push({ img: await uploadBlob(items[i].blob), options: items[i].options, correct: items[i].correct || null, label: items[i].label || "" });
+      qs.push({ img: await uploadBlob(items[i].blob), options: items[i].options, correct: validCorrect(items[i]) ? items[i].correct : null, label: items[i].label || "" });
     }
     let sheet = null;
     const sf = $("sheetFile").files[0];
     if (sf) { $("status").textContent = " Uploading answer sheet…"; sheet = await uploadBlob(await compress(sf, 1800)); }
     $("status").textContent = " Saving…";
+    const answerKey = keyMeta
+      ? { source: keyMeta.touched ? "mixed" : "pdf", method: keyMeta.method, fileName: keyMeta.fileName, detected: keyMeta.detected }
+      : { source: keyed ? "manual" : "none" };
     const r = await api("exam", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: $("title").value, minutes: $("minutes").value, questions: qs, sheet, reveal: $("reveal").checked, negative: $("negOn").checked ? $("negVal").value : 0 }) });
+      body: JSON.stringify({ title: $("title").value, minutes: $("minutes").value, questions: qs, sheet, reveal: $("reveal").checked,
+        negative: $("negOn").checked ? $("negVal").value : 0, manualGrading: keyed === 0 && $("manualGrade").checked, answerKey }) });
     const link = location.origin + "/?exam=" + r.id;
     $("created").innerHTML = "Exam link: <a href='" + link + "' target='_blank'>" + link + "</a>";
-    $("status").textContent = " Done.";
+    $("status").textContent = " Done — answer key saved for " + r.keyed + " of " + r.total + " questions.";
     items = []; renderItems(); $("sheetFile").value = ""; $("title").value = "";
+    keyState = null; keyMeta = null; $("keyReview").classList.add("hidden"); $("keyProgBox").classList.add("hidden"); $("keyFile").value = ""; $("manualGrade").checked = false;
     loadExams();
   } catch (e) { $("status").textContent = " Error: " + e.message; }
   $("createBtn").disabled = false;
@@ -287,10 +562,24 @@ async function loadExams() {
   const box = $("exams"); box.innerHTML = list.length ? "" : '<p class="muted">No exams yet.</p>';
   list.forEach((ex) => {
     const link = location.origin + "/?exam=" + ex.id;
+    const keyed = ex.keyed == null ? null : ex.keyed;
     const d = document.createElement("div"); d.className = "ex";
-    d.innerHTML = '<div class="t"><strong></strong><div class="muted">' + ex.count + ' questions · ' + ex.minutes + ' min</div></div>' +
-      '<button class="ghost" data-copy>Copy link</button><button class="ghost" data-res>Results</button><button class="danger" data-del>Delete</button>';
+    d.innerHTML = '<div class="t"><strong></strong><div class="muted" data-info></div><div class="keyline hidden" data-keyline></div></div>' +
+      '<button class="ghost" data-key>Answer key</button><button class="ghost" data-copy>Copy link</button><button class="ghost" data-res>Results</button><button class="danger" data-del>Delete</button>';
     d.querySelector("strong").textContent = ex.title;
+    const info = d.querySelector("[data-info]");
+    info.textContent = ex.count + " questions · " + ex.minutes + " min" + (keyed == null ? "" : keyed === ex.count ? " · answer key complete" : keyed === 0 ? " · no answer key (manual grading)" : " · answer key: " + keyed + " / " + ex.count);
+    if (keyed != null && keyed < ex.count) info.style.color = "var(--warn)";
+    d.querySelector("[data-key]").onclick = async () => {
+      const kl = d.querySelector("[data-keyline]");
+      if (!kl.classList.contains("hidden")) return kl.classList.add("hidden");
+      try {
+        const full = await api("exam/" + ex.id);
+        kl.textContent = full.questions.map((q) => (q.label || q.n) + ":" + (q.correct || "—")).join("   ") +
+          (full.answerKey && full.answerKey.fileName ? "   (from " + full.answerKey.fileName + (full.answerKey.method ? ", " + full.answerKey.method : "") + ")" : "");
+        kl.classList.remove("hidden");
+      } catch (e) { alert(e.message); }
+    };
     d.querySelector("[data-copy]").onclick = () => { navigator.clipboard.writeText(link); alert("Link copied:\n" + link); };
     d.querySelector("[data-res]").onclick = () => showResults(ex);
     d.querySelector("[data-del]").onclick = async () => { if (confirm("Delete this exam and all results?")) { await api("exam/" + ex.id, { method: "DELETE" }); $("resCard").classList.add("hidden"); loadExams(); } };
@@ -304,8 +593,9 @@ async function showResults(ex) {
   const tb = $("resBody"); tb.innerHTML = "";
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    const score = r.graded ? r.score + " / " + r.graded : "—";
-    tr.innerHTML = "<td></td><td>" + score + "</td><td>" + new Date(r.at).toLocaleString() + "</td>";
+    const dash = (v) => (v == null ? "—" : v);
+    const score = r.graded ? r.score + " / " + (r.maxScore != null ? r.maxScore : r.graded) : "not scored";
+    tr.innerHTML = "<td></td><td>" + score + "</td><td>" + dash(r.right) + "</td><td>" + dash(r.wrong) + "</td><td>" + dash(r.unanswered) + "</td><td>" + new Date(r.at).toLocaleString() + "</td>";
     tr.firstChild.textContent = r.name;
     tb.appendChild(tr);
   });
